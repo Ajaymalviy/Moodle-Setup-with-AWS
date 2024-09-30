@@ -1,0 +1,131 @@
+---
+- name: Install Moodle on Ubuntu
+  hosts: moodle
+  become: yes
+  vars:
+    mysql_root_password: 'Gurpreet@123'  # Set your MySQL root password
+    moodle_db_name: 'moodle'
+    moodle_db_user: 'moodleuser'
+    moodle_db_password: 'MoodleDude123!'  # Set Moodle user password
+    moodle_version: '401'
+
+  tasks:
+    - name: Update apt package cache
+      apt:
+        update_cache: yes
+
+    - name: Install Apache Web Server
+      apt:
+        name: apache2
+        state: present
+
+    - name: Start and enable Apache service
+      systemd:
+        name: apache2
+        state: started
+        enabled: yes
+
+    - name: Install MySQL Server
+      apt:
+        name: mysql-server
+        state: present
+
+    - name: Start and enable MySQL service
+      systemd:
+        name: mysql
+        state: started
+        enabled: yes
+
+    - name: Create Moodle database
+      mysql_db:
+        name: "{{ moodle_db_name }}"
+        state: present
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+    - name: Create Moodle database user
+      mysql_user:
+        name: "{{ moodle_db_user }}"
+        password: "{{ moodle_db_password }}"
+        host: localhost
+        priv: "{{ moodle_db_name }}.*:ALL"
+        state: present
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+    - name: Install PHP and Required Extensions
+      apt:
+        name:
+          - php
+          - libapache2-mod-php
+          - php-mysql
+          - php-xmlrpc
+          - php-intl
+          - php-soap
+          - php-xml
+          - php-gd
+          - php-cli
+          - php-curl
+          - php-zip
+          - php-mbstring
+        state: present
+
+    - name: Restart Apache to load PHP
+      systemd:
+        name: apache2
+        state: restarted
+
+    - name: Download Moodle (no unzip needed)
+      get_url:
+        url: https://download.moodle.org/download.php/stable404/moodle-latest-404.zip
+        dest: /var/www/html/moodle-latest.zip
+
+    - name: Move Moodle HTML content to /var/www/html/moodle
+      command: mv /var/www/html/moodle-latest.zip /var/www/html/moodle/
+
+    - name: Set permissions on Moodle directory
+      file:
+        path: /var/www/html/moodle
+        owner: www-data
+        group: www-data
+        mode: '0755'
+        recurse: yes
+
+    - name: Create Moodle data directory
+      file:
+        path: /var/www/moodledata
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0770'
+
+    - name: Create a basic config.php for Moodle
+      copy:
+        dest: /var/www/html/moodle/config.php
+        content: |
+          <?php
+          unset($CFG);
+          global $CFG;
+          $CFG = new stdClass();
+          $CFG->dbtype    = 'mysqli';
+          $CFG->dblibrary = 'native';
+          $CFG->dbhost    = 'localhost';
+          $CFG->dbname    = '{{ moodle_db_name }}';
+          $CFG->dbuser    = '{{ moodle_db_user }}';
+          $CFG->dbpass    = '{{ moodle_db_password }}';
+          $CFG->prefix    = 'mdl_';
+          $CFG->dboptions = array (
+            'dbpersist' => 0,
+            'dbport' => '',
+            'dbsocket' => '',
+            'dbcollation' => 'utf8mb4_unicode_ci',
+          );
+          $CFG->wwwroot   = 'http://{{ ansible_default_ipv4.address }}/moodle';
+          $CFG->dataroot  = '/var/www/moodledata';
+          $CFG->admin     = 'admin';
+          require_once(_DIR_ . '/lib/setup.php');
+
+    - name: Restart Apache to finalize installation
+      systemd:
+        name: apache2
+        state: restarted
